@@ -320,16 +320,16 @@ bool Bone2D::_editor_get_bone_shape(Vector<Vector2> *p_shape, Vector<Vector2> *p
 	}
 
 	Vector2 rel;
+	Vector2 global_scale_abs = get_global_scale().abs();
+
 	if (p_other_bone) {
 		rel = (p_other_bone->get_global_position() - get_global_position());
 		rel = rel.rotated(-get_global_rotation()); // Undo Bone2D node's rotation so its drawn correctly regardless of the node's rotation
 	} else {
-		real_t angle_to_use = get_rotation() + bone_angle;
-		rel = Vector2(cos(angle_to_use), sin(angle_to_use)) * (length * MIN(get_global_scale().x, get_global_scale().y));
-		rel = rel.rotated(-get_rotation()); // Undo Bone2D node's rotation so its drawn correctly regardless of the node's rotation
+		rel = Vector2(cos(bone_angle), sin(bone_angle)) * length * get_global_scale().abs();
 	}
 
-	Vector2 relt = rel.rotated(Math_PI * 0.5).normalized() * bone_width;
+	Vector2 relt = rel.rotated(Math_PI * 0.5).normalized() * bone_width * global_scale_abs;
 	Vector2 reln = rel.normalized();
 	Vector2 reltn = relt.normalized();
 
@@ -343,12 +343,12 @@ bool Bone2D::_editor_get_bone_shape(Vector<Vector2> *p_shape, Vector<Vector2> *p
 
 	if (p_outline_shape) {
 		p_outline_shape->clear();
-		p_outline_shape->push_back((-reln - reltn) * bone_outline_width);
-		p_outline_shape->push_back((-reln + reltn) * bone_outline_width);
-		p_outline_shape->push_back(rel * 0.2 + relt + reltn * bone_outline_width);
-		p_outline_shape->push_back(rel + (reln + reltn) * bone_outline_width);
-		p_outline_shape->push_back(rel + (reln - reltn) * bone_outline_width);
-		p_outline_shape->push_back(rel * 0.2 - relt - reltn * bone_outline_width);
+		p_outline_shape->push_back((-reln - reltn) * bone_outline_width * global_scale_abs);
+		p_outline_shape->push_back((-reln + reltn) * bone_outline_width * global_scale_abs);
+		p_outline_shape->push_back(rel * 0.2 + relt + reltn * bone_outline_width * global_scale_abs);
+		p_outline_shape->push_back(rel + (reln + reltn) * bone_outline_width * global_scale_abs);
+		p_outline_shape->push_back(rel + (reln - reltn) * bone_outline_width * global_scale_abs);
+		p_outline_shape->push_back(rel * 0.2 - relt - reltn * bone_outline_width * global_scale_abs);
 	}
 	return true;
 }
@@ -429,9 +429,9 @@ PackedStringArray Bone2D::get_configuration_warnings() const {
 }
 
 void Bone2D::calculate_length_and_rotation() {
-	// if there is at least a single child Bone2D node, we can calculate
+	// If there is at least a single child Bone2D node, we can calculate
 	// the length and direction. We will always just use the first Bone2D for this.
-	bool calculated = false;
+
 	int child_count = get_child_count();
 	if (child_count > 0) {
 		for (int i = 0; i < child_count; i++) {
@@ -440,18 +440,13 @@ void Bone2D::calculate_length_and_rotation() {
 				Vector2 child_local_pos = to_local(child->get_global_position());
 				length = child_local_pos.length();
 				bone_angle = child_local_pos.normalized().angle();
-				calculated = true;
-				break;
+				return; // Finished!
 			}
 		}
 	}
-	if (calculated) {
-		return; // Finished!
-	} else {
-		WARN_PRINT("No Bone2D children of node " + get_name() + ". Cannot calculate bone length or angle reliably.\nUsing transform rotation for bone angle");
-		bone_angle = get_transform().get_rotation();
-		return;
-	}
+
+	WARN_PRINT("No Bone2D children of node " + get_name() + ". Cannot calculate bone length or angle reliably.\nUsing transform rotation for bone angle");
+	bone_angle = get_transform().get_rotation();
 }
 
 void Bone2D::set_autocalculate_length_and_angle(bool p_autocalculate) {
