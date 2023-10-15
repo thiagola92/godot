@@ -437,9 +437,9 @@ void Bone2D::calculate_length_and_rotation() {
 		for (int i = 0; i < child_count; i++) {
 			Bone2D *child = Object::cast_to<Bone2D>(get_child(i));
 			if (child) {
-				Vector2 child_local_pos = to_local(child->get_global_position());
-				length = child_local_pos.length();
-				bone_angle = child_local_pos.normalized().angle();
+				Vector2 child_pos = child->get_position();
+				length = child_pos.length();
+				bone_angle = child_pos.normalized().angle();
 				return; // Finished!
 			}
 		}
