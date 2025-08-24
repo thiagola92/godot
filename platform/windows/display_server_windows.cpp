@@ -33,6 +33,7 @@
 #include "drop_target_windows.h"
 #include "os_windows.h"
 #include "scene/main/window.h"
+#include "servers/display_server.h"
 #include "wgl_detect_version.h"
 
 #include "core/config/project_settings.h"
@@ -2427,30 +2428,22 @@ void DisplayServerWindows::window_set_mode(WindowMode p_mode, WindowID p_window)
 		return;
 	}
 
-	bool was_fullscreen = wd.fullscreen;
+	// Setting all to false until we know where is going.
+	wd.was_maximized_pre_fs = false;
 	wd.was_fullscreen_pre_min = false;
 
-	if (p_mode == WINDOW_MODE_MAXIMIZED && wd.borderless) {
-		int cs = window_get_current_screen(p_window);
-		Rect2i full = Rect2i(screen_get_position(cs), screen_get_size(cs));
-		Rect2i usable = screen_get_usable_rect(cs);
-		if (full == usable) {
-			p_mode = WINDOW_MODE_FULLSCREEN;
-		}
+	// When leaving windowed mode.
+	if (p_mode != WINDOW_MODE_WINDOWED && !wd.fullscreen && !wd.maximized && !wd.minimized) {
+		// Save window size.
+		GetWindowRect(wd.hWnd, &wd.pre_fs_rect);
+		wd.pre_fs_valid = true;
 	}
 
-	if (wd.fullscreen && p_mode != WINDOW_MODE_FULLSCREEN && p_mode != WINDOW_MODE_EXCLUSIVE_FULLSCREEN) {
+	// When leaving fullscreen mode.
+	if (p_mode != WINDOW_MODE_FULLSCREEN && p_mode != WINDOW_MODE_EXCLUSIVE_FULLSCREEN && wd.fullscreen) {
+		// Restore window size.
 		RECT rect;
 
-		wd.fullscreen = false;
-		wd.multiwindow_fs = false;
-
-		// Restore previous maximized state.
-		wd.maximized = wd.was_maximized_pre_fs;
-
-		_update_window_style(p_window, false);
-
-		// Restore window rect after exiting fullscreen.
 		if (wd.pre_fs_valid) {
 			rect = wd.pre_fs_rect;
 		} else {
@@ -2463,6 +2456,7 @@ void DisplayServerWindows::window_set_mode(WindowMode p_mode, WindowID p_window)
 		ShowWindow(wd.hWnd, SW_RESTORE);
 		MoveWindow(wd.hWnd, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, TRUE);
 
+		// Restore number of trails.
 		if (restore_mouse_trails > 1) {
 			SystemParametersInfoA(SPI_SETMOUSETRAILS, restore_mouse_trails, nullptr, 0);
 			restore_mouse_trails = 0;
@@ -2470,77 +2464,60 @@ void DisplayServerWindows::window_set_mode(WindowMode p_mode, WindowID p_window)
 	}
 
 	if (p_mode == WINDOW_MODE_WINDOWED) {
-		ShowWindow(wd.hWnd, SW_NORMAL);
 		wd.maximized = false;
 		wd.minimized = false;
-	}
+		wd.fullscreen = false;
+		wd.multiwindow_fs = false;
 
-	if (p_mode == WINDOW_MODE_MAXIMIZED && !wd.borderless) {
-		ShowWindow(wd.hWnd, SW_MAXIMIZE);
-		wd.maximized = true;
-		wd.minimized = false;
-	}
-
-	if (p_mode == WINDOW_MODE_MAXIMIZED && wd.borderless) {
 		ShowWindow(wd.hWnd, SW_NORMAL);
+		_update_window_style(p_window, false);
+	}
+
+	if (p_mode == WINDOW_MODE_MAXIMIZED) {
 		wd.maximized = true;
 		wd.minimized = false;
+		wd.fullscreen = false;
+		wd.multiwindow_fs = false;
 
-		int cs = window_get_current_screen(p_window);
-		Rect2i usable = screen_get_usable_rect(cs);
-		Point2 pos = usable.position + _get_screens_origin();
-		Size2 size = usable.size;
-		MoveWindow(wd.hWnd, pos.x, pos.y, size.width, size.height, TRUE);
+		ShowWindow(wd.hWnd, SW_MAXIMIZE);
+		_update_window_style(p_window, false);
 	}
 
 	if (p_mode == WINDOW_MODE_MINIMIZED) {
-		ShowWindow(wd.hWnd, SW_MINIMIZE);
+		wd.was_fullscreen_pre_min = wd.fullscreen;
 		wd.maximized = false;
 		wd.minimized = true;
-		wd.was_fullscreen_pre_min = was_fullscreen;
-	}
-
-	if (p_mode == WINDOW_MODE_EXCLUSIVE_FULLSCREEN) {
+		wd.fullscreen = false;
 		wd.multiwindow_fs = false;
-	} else if (p_mode == WINDOW_MODE_FULLSCREEN) {
-		wd.multiwindow_fs = true;
+
+		ShowWindow(wd.hWnd, SW_MINIMIZE);
+		_update_window_style(p_window, false);
 	}
-	_update_window_style(p_window, false);
 
-	if ((p_mode == WINDOW_MODE_FULLSCREEN || p_mode == WINDOW_MODE_EXCLUSIVE_FULLSCREEN) && !wd.fullscreen) {
-		if (wd.minimized || wd.maximized) {
-			ShowWindow(wd.hWnd, SW_RESTORE);
-		}
-
-		// Save previous maximized stare.
+	if (p_mode == WINDOW_MODE_FULLSCREEN || p_mode == WINDOW_MODE_EXCLUSIVE_FULLSCREEN) {
 		wd.was_maximized_pre_fs = wd.maximized;
-
-		if (!was_fullscreen) {
-			// Save non-fullscreen rect before entering fullscreen.
-			GetWindowRect(wd.hWnd, &wd.pre_fs_rect);
-			wd.pre_fs_valid = true;
-		}
+		wd.maximized = false;
+		wd.minimized = false;
+		wd.fullscreen = true;
+		wd.multiwindow_fs = p_mode == WINDOW_MODE_FULLSCREEN;
 
 		int cs = window_get_current_screen(p_window);
 		Point2 pos = screen_get_position(cs) + _get_screens_origin();
 		Size2 size = screen_get_size(cs);
 
-		wd.fullscreen = true;
-		wd.maximized = false;
-		wd.minimized = false;
-
 		_update_window_style(p_window, false);
 
-		int off_x = (wd.multiwindow_fs || (!wd.fullscreen && wd.borderless && wd.maximized)) ? FS_TRANSP_BORDER : 0;
+		int off_x = wd.multiwindow_fs ? FS_TRANSP_BORDER : 0;
 		MoveWindow(wd.hWnd, pos.x, pos.y, size.width + off_x, size.height, TRUE);
 
-		// If the user has mouse trails enabled in windows, then sometimes the cursor disappears in fullscreen mode.
-		// Save number of trails so we can restore when exiting, then turn off mouse trails
+		// If the user has mouse trails enabled, sometimes the cursor disappears in fullscreen mode.
+		// Save number of trails, then turn off mouse trails.
 		SystemParametersInfoA(SPI_GETMOUSETRAILS, 0, &restore_mouse_trails, 0);
 		if (restore_mouse_trails > 1) {
 			SystemParametersInfoA(SPI_SETMOUSETRAILS, 0, nullptr, 0);
 		}
 	}
+
 	_update_window_mouse_passthrough(p_window);
 }
 
@@ -5743,29 +5720,32 @@ LRESULT DisplayServerWindows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARA
 				Point2i screen_position = screen_get_position(screen_id);
 				Rect2i usable = screen_get_usable_rect(screen_id);
 
-				window.maximized = false;
-				window.minimized = false;
-				window.fullscreen = false;
+				// Make sure that states are correct.
+				window.maximized = IsZoomed(hWnd);
+				window.minimized = IsIconic(hWnd);
 
-				if (IsIconic(hWnd)) {
-					window.minimized = true;
-				} else if (IsZoomed(hWnd)) {
-					window.maximized = true;
+				// Window can match screen when the user is fullscreen.
+				// Usable can match window when ???.
+				// Usable can match screen when the user has taskbar hidden.
+				bool window_match_screen = window_rect.position == screen_position && window_rect.size.width + off_x == screen_size.width && window_rect.size.height == screen_size.height;
+				bool usable_match_window = usable.position == window_rect.position && usable.size == window_rect.size;
+				bool usable_match_screen = usable.position == screen_position && usable.size == screen_size;
 
+				if (window.maximized) {
 					// If maximized_window_size == screen_size add 1px border to prevent switching to exclusive_fs.
-					if (!window.maximized_fs && window.borderless && window_rect.position == screen_position && window_rect.size == screen_size) {
+					if (!window.maximized_fs && window.borderless && window_match_screen) {
 						// Window (borderless) was just maximized and the covers the entire screen.
 						window.maximized_fs = true;
 						_update_window_style(window_id, false);
 					}
-					if (window.borderless && (screen_size != usable.size || screen_position != usable.position)) {
+					if (window.borderless) {
 						Point2 pos = usable.position + _get_screens_origin();
 						Size2 size = usable.size;
 						MoveWindow(window.hWnd, pos.x, pos.y, size.width, size.height, TRUE);
 					}
-				} else if (window_rect.position == screen_position && window_rect.size == screen_size) {
+				} else if (window_match_screen) {
 					window.fullscreen = true;
-				} else if (window.borderless && usable.position == window_rect.position && usable.size == window_rect.size) {
+				} else if (window.borderless && usable_match_window) {
 					window.maximized = true;
 				}
 
@@ -7426,7 +7406,7 @@ DisplayServerWindows::~DisplayServerWindows() {
 		rendering_context = nullptr;
 	}
 #endif
-
+	// Restore number of trails.
 	if (restore_mouse_trails > 1) {
 		SystemParametersInfoA(SPI_SETMOUSETRAILS, restore_mouse_trails, nullptr, 0);
 	}
